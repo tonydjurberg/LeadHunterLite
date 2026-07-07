@@ -1,0 +1,21 @@
+const puppeteer = require('puppeteer');
+
+async function scrape() {
+  const browser = await puppeteer.launch({
+    headless: false
+  });
+
+  const page = await browser.newPage();
+
+  await page.goto('https://www.industritorget.se/', {
+    waitUntil: 'domcontentloaded'
+  });
+
+  console.log("Sidan öppnad!");
+
+  await page.waitForTimeout(5000);
+
+  await browser.close();
+}
+
+scrape();
