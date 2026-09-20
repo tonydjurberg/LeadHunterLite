@@ -66,27 +66,77 @@ def discover(kind,n,log):
  from selenium import webdriver
  from selenium.webdriver.common.by import By
  from selenium.webdriver.common.keys import Keys
- base=BROKER if kind=='broker' else COMPANY; d=webdriver.Chrome(); d.set_page_load_timeout(40); found=[]
+ from selenium.webdriver.support.ui import WebDriverWait
+ from selenium.webdriver.support import expected_conditions as EC
+ from selenium.common.exceptions import ElementClickInterceptedException, StaleElementReferenceException
+ base=BROKER if kind=='broker' else COMPANY
+ d=webdriver.Chrome()
+ d.set_page_load_timeout(40)
+ found=[]
+ def dismiss_overlays():
+  # FMI explicitly displays a cookie/message banner with a "Stäng meddelandet" button.
+  for e in d.find_elements(By.XPATH,"//*[self::button or self::a][contains(normalize-space(.),'Stäng meddelandet')]"):
+   try:
+    if e.is_displayed():
+     d.execute_script("arguments[0].click();",e)
+     time.sleep(.25)
+   except Exception: pass
+ def js_click(e):
+  d.execute_script("arguments[0].scrollIntoView({block:'center',inline:'center'});",e)
+  try:
+   e.click()
+  except ElementClickInterceptedException:
+   d.execute_script("arguments[0].click();",e)
+ def wait_results():
+  time.sleep(1.5)
+  # Results are direct FMI record links; never follow generic navigation links.
+  for a in d.find_elements(By.CSS_SELECTOR,'a[href]'):
+   u=detail_url(a.get_attribute('href'),kind)
+   if u and u not in found: found.append(u)
  try:
   d.get(base)
+  WebDriverWait(d,20).until(EC.presence_of_element_located((By.TAG_NAME,'body')))
+  dismiss_overlays()
   for county in COUNTIES[:n]:
    log('FMI: '+county)
+   dismiss_overlays()
    ins=d.find_elements(By.CSS_SELECTOR,'input[type="search"],input[name="q"],input.ant-input,input[type="text"]')
    target=None
    for e in ins:
     try:
      if e.is_displayed() and e.is_enabled():
-      ph=(e.get_attribute('placeholder') or '').lower(); name=(e.get_attribute('name') or '').lower()
-      if 'sök' in ph or 'fritext' in ph or name in ('q','search','query'):target=e;break
-    except Exception:pass
-   if target is None: target=next((e for e in ins if e.is_displayed() and e.is_enabled()),None)
-   if target is None: raise RuntimeError('FMI-sökfält hittades inte')
-   target.click();target.send_keys(Keys.CONTROL,'a');target.send_keys(county);target.send_keys(Keys.ENTER);time.sleep(1.8)
-   for a in d.find_elements(By.CSS_SELECTOR,'a[href]'):
-    u=detail_url(a.get_attribute('href'),kind)
-    if u and u not in found:found.append(u)
- finally:d.quit()
+      ph=(e.get_attribute('placeholder') or '').lower()
+      name=(e.get_attribute('name') or '').lower()
+      if 'fritext' in ph or 'sök' in ph or name in ('q','search','query'):
+       target=e; break
+    except StaleElementReferenceException: pass
+   if target is None:
+    target=next((e for e in ins if e.is_displayed() and e.is_enabled()),None)
+   if target is None:
+    raise RuntimeError('FMI-sökfältet "Fritext" hittades inte')
+   d.execute_script("arguments[0].scrollIntoView({block:'center'});",target)
+   try:
+    target.click()
+   except ElementClickInterceptedException:
+    dismiss_overlays()
+    d.execute_script("arguments[0].click();",target)
+   target.send_keys(Keys.CONTROL,'a')
+   target.send_keys(county)
+   # FMI documentation says Enter in the quick-search field performs the search.
+   target.send_keys(Keys.ENTER)
+   wait_results()
+   # If the suggestion UI swallowed Enter, explicitly invoke the visible Sök button.
+   if not any(county.lower() in (d.find_element(By.TAG_NAME,'body').text or '').lower() for _ in [0]):
+    buttons=d.find_elements(By.XPATH,"//button[normalize-space(.)='Sök'] | //input[@type='submit']")
+    for b in buttons:
+     try:
+      if b.is_displayed() and b.is_enabled():
+       js_click(b); wait_results(); break
+     except Exception: pass
+ finally:
+  d.quit()
  return found
+
 def run(broker,company,n,out,log):
  sess=requests.Session();sess.headers['User-Agent']=UA; urls=[]
  if broker:urls+=discover('broker',n,log)
